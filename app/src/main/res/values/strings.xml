@@ -782,4 +782,11 @@
     <string name="settings_audio_delete_confirm">Delete profile</string>
     <string name="settings_audio_delete_cancel">Keep</string>
     <string name="player_picker_audio_profile">Audio profile</string>
+    <string name="player_picker_volume">Volume</string>
+    <string name="player_picker_volume_value">‹  %1$d  ›   %2$s dB</string>
+    <string name="player_picker_volume_muted">‹  0  ›   muted</string>
+    <string name="player_volume_flash_db">Volume · %1$s dB</string>
+    <string name="player_volume_flash_muted">Volume · muted</string>
+    <string name="settings_audio_headphone_volume">Headphone volume</string>
+    <string name="settings_desc_audio_headphone_volume">The app\'s own level on headphones; keyboard - and = change it during playback.</string>
 </resources>

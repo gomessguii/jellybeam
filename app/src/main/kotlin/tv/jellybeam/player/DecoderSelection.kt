@@ -279,6 +279,7 @@ class JellybeamRenderersFactory(
                     ProfileAudioProcessor(
                         profile = { AppGraph.audioDspOrNull()?.activeProfile },
                         headphones = { AppGraph.audioRouteOrNull()?.isHeadphones == true },
+                        volume = { AppGraph.audioDspOrNull()?.volumeGain ?: 1.0 },
                     ),
                 ),
             )

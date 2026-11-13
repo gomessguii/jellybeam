@@ -3,6 +3,7 @@ package tv.jellybeam.audio
 import android.util.Log
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,6 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import tv.jellybeam.player.AudioOutputKind
 import tv.jellybeam.player.AudioRoute
+import tv.jellybeam.player.AudioRouteHub
 
 /**
  * Owns the user's audio profiles: app-side JSON in [file] (the Rust settings record can't grow
@@ -23,7 +25,41 @@ class AudioDsp(
     private val file: File,
     private val route: StateFlow<AudioRoute>,
     private val scope: CoroutineScope,
+    hub: AudioRouteHub? = null,
 ) {
+    private val listeners = CopyOnWriteArrayList<() -> Unit>()
+
+    init {
+        // Whether the app's volume applies follows the route, so route flips are changes too.
+        hub?.addHeadphonesListener { notifyListeners() }
+    }
+
+    /** [listener] runs on an arbitrary thread after any profile, volume or headphone-route change. */
+    fun addListener(listener: () -> Unit) {
+        listeners += listener
+    }
+
+    fun removeListener(listener: () -> Unit) {
+        listeners -= listener
+    }
+
+    private fun notifyListeners() = listeners.forEach { it() }
+
+    /** The app's volume steers this route: headphones, whose hardware volume the TV may ignore. */
+    val ownsVolume: Boolean get() = route.value.kind == AudioOutputKind.HEADPHONES
+
+    /** Linear gain the audio thread applies after the profile; unity off headphones. */
+    val volumeGain: Double get() = if (ownsVolume) HeadphoneVolume.gain(_state.value.headphoneVolume) else 1.0
+
+    val headphoneVolume: Int get() = _state.value.headphoneVolume
+
+    fun setHeadphoneVolume(steps: Int) {
+        val target = HeadphoneVolume.clamp(steps)
+        if (target != _state.value.headphoneVolume) update { it.copy(headphoneVolume = target) }
+    }
+
+    fun stepHeadphoneVolume(delta: Int) = setHeadphoneVolume(_state.value.headphoneVolume + delta)
+
     private val _state = MutableStateFlow(load())
     val state: StateFlow<AudioProfilesState> = _state.asStateFlow()
 
@@ -39,6 +75,7 @@ class AudioDsp(
         val next = synchronized(this) {
             change(_state.value).also { _state.value = it }
         }
+        notifyListeners()
         scope.launch(Dispatchers.IO) { writeLock.withLock { save(next) } }
     }
 

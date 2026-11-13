@@ -1175,6 +1175,14 @@ fun PlaybackScreen(
                 }
             }
 
+            // The app's headphone volume from a keyboard, OSD shown or not, flashed so the level is seen.
+            appVolumeKeyDirection(event.key)?.let { direction ->
+                if (viewModel.stepVolume(direction) == null) return@let
+                val (level, caption) = viewModel.volumeFlash() ?: return@let
+                flash(level, caption)
+                return@keyHandler true
+            }
+
             val current = viewModel.state.value
             val currentButtons = currentVisibleButtons(current)
 
@@ -1361,6 +1369,11 @@ fun PlaybackScreen(
                     }
                     Key.DirectionUp -> pickerFocusIndex = (pickerFocusIndex - 1).coerceAtLeast(0)
                     Key.DirectionDown -> pickerFocusIndex = (pickerFocusIndex + 1).coerceAtMost((rowCount - 1).coerceAtLeast(0))
+                    Key.DirectionLeft, Key.DirectionRight -> {
+                        if (picker.volumeText != null && pickerFocusIndex == picker.volumeRowIndex) {
+                            viewModel.stepVolume(if (event.key == Key.DirectionRight) 1 else -1)
+                        }
+                    }
                     in SELECT_KEYS -> {
                         val audioCount = picker.audioTracks.size
                         if (pickerFocusIndex < audioCount) {
@@ -1369,6 +1382,8 @@ fun PlaybackScreen(
                             picker.subtitleTracks.getOrNull(pickerFocusIndex - audioCount)?.let { viewModel.chooseSubtitle(it.id) }
                         } else if (pickerFocusIndex >= picker.profileRowStart) {
                             viewModel.chooseProfile(pickerFocusIndex - picker.profileRowStart)
+                        } else if (picker.volumeText != null && pickerFocusIndex == picker.volumeRowIndex) {
+                            Unit // Left/Right adjust the volume; Select does nothing here.
                         } else {
                             // docs/12 §16: the Delay row swaps the picker for the strip; the delayOpen effect hides the OSD.
                             viewModel.openSubtitleDelay()
@@ -3213,16 +3228,21 @@ private fun ColumnScope.TrackPickerRows(picker: TrackPickerState, focusedIndex: 
         TrackChoiceRow(choice = delayRow, isFocused = audioCount + picker.subtitleTracks.size == focusedIndex)
     }
 
-    // The current output's audio profiles, last so track choices keep their places.
-    if (picker.profileChoices.isNotEmpty()) {
+    // The current output's volume and audio profiles, last so track choices keep their places.
+    if (picker.outputSectionShown) {
         Spacer(modifier = Modifier.height(16.dp))
         TrackPickerSectionHeader(text = "${stringResource(R.string.player_picker_audio_profile)} · ${picker.profileOutput}")
         Spacer(modifier = Modifier.height(8.dp))
+        picker.volumeText?.let { text ->
+            val label = stringResource(R.string.player_picker_volume)
+            val row = remember(label, text) { TrackChoice(id = TRACK_PICKER_VOLUME_ROW_ID, label = label, selected = false, meta = text) }
+            TrackChoiceRow(choice = row, isFocused = picker.volumeRowIndex == focusedIndex, revealAbove = TRACK_SECTION_HEAD_REVEAL)
+        }
         picker.profileChoices.forEachIndexed { index, choice ->
             TrackChoiceRow(
                 choice = choice,
                 isFocused = picker.profileRowStart + index == focusedIndex,
-                revealAbove = if (index == 0) TRACK_SECTION_HEAD_REVEAL else 0.dp,
+                revealAbove = if (index == 0 && picker.volumeText == null) TRACK_SECTION_HEAD_REVEAL else 0.dp,
             )
         }
     }
@@ -3230,6 +3250,9 @@ private fun ColumnScope.TrackPickerRows(picker: TrackPickerState, focusedIndex: 
 
 /** Display-only id of the picker's Delay row; no [TrackMapping] id is ever this. */
 private const val TRACK_PICKER_DELAY_ROW_ID = Long.MIN_VALUE
+
+/** Display-only id of the picker's Volume row. */
+private const val TRACK_PICKER_VOLUME_ROW_ID = Long.MIN_VALUE + 1
 
 @Composable
 private fun TrackPickerSectionHeader(text: String) {

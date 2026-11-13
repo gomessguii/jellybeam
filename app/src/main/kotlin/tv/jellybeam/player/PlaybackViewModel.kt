@@ -10,6 +10,7 @@ import androidx.media3.common.Tracks
 import kotlinx.coroutines.Dispatchers
 import tv.jellybeam.AppGraph
 import tv.jellybeam.R
+import tv.jellybeam.audio.HeadphoneVolume
 import tv.jellybeam.audio.PROFILE_OUTPUTS
 import tv.jellybeam.data.runCatchingCancellable
 import tv.jellybeam.i18n.UiStrings
@@ -525,15 +526,23 @@ data class TrackPickerState(
     val profileIds: List<String?> = emptyList(),
     /** The output those profiles apply to, already worded, e.g. "Headphones". */
     val profileOutput: String = "",
+    /** The app's headphone volume row (Left/Right adjust), already worded; null off headphones. */
+    val volumeText: String? = null,
 ) {
     /** docs/12 §16: the "Delay" row ends the list exactly while a real subtitle (embedded or sidecar) is selected. */
     val delayRowShown: Boolean get() = subtitleTracks.any { it.selected && it.id >= 0 }
 
-    /** Rows in the one focus order: audio, subtitles, the Delay row, then the profiles. */
+    /** Rows in the one focus order: audio, subtitles, the Delay row, the Volume row, then the profiles. */
     val rowCount: Int get() = profileRowStart + profileChoices.size
 
+    /** Focus index of the Volume row, when [volumeText] shows it. */
+    val volumeRowIndex: Int get() = audioTracks.size + subtitleTracks.size + if (delayRowShown) 1 else 0
+
     /** Focus index of the first profile row. */
-    val profileRowStart: Int get() = audioTracks.size + subtitleTracks.size + if (delayRowShown) 1 else 0
+    val profileRowStart: Int get() = volumeRowIndex + if (volumeText != null) 1 else 0
+
+    /** Whether the output section (Volume and profile rows) shows at all. */
+    val outputSectionShown: Boolean get() = volumeText != null || profileChoices.isNotEmpty()
 }
 
 /**
@@ -2344,7 +2353,9 @@ class PlaybackViewModel(
         val dsp = AppGraph.audioDspOrNull() ?: return picker
         val profiles = dsp.state.value
         val output = dsp.currentOutput
-        if (profiles.profiles.isEmpty() || output !in PROFILE_OUTPUTS) return picker
+        if (output !in PROFILE_OUTPUTS) return picker
+        val volumeText = if (dsp.ownsVolume) volumeText(dsp.headphoneVolume) else null
+        if (profiles.profiles.isEmpty() && volumeText == null) return picker
         val selectedId = profiles.defaults[output]
         val ids = listOf<String?>(null) + profiles.profiles.map { it.id }
         val choices = ids.mapIndexed { index, id ->
@@ -2361,7 +2372,46 @@ class PlaybackViewModel(
                 else -> R.string.settings_audio_output_external
             },
         )
-        return picker.copy(profileChoices = choices, profileIds = ids, profileOutput = outputLabel)
+        return picker.copy(
+            profileChoices = if (profiles.profiles.isEmpty()) emptyList() else choices,
+            profileIds = if (profiles.profiles.isEmpty()) emptyList() else ids,
+            profileOutput = outputLabel,
+            volumeText = volumeText,
+        )
+    }
+
+    private fun volumeText(steps: Int): String =
+        if (steps <= 0) {
+            strings.get(R.string.player_picker_volume_muted)
+        } else {
+            val db = (steps - HeadphoneVolume.MAX) * HeadphoneVolume.STEP_DB
+            strings.get(R.string.player_picker_volume_value, steps, String.format(java.util.Locale.US, "%.1f", db))
+        }
+
+    /** The keyboard volume flash: the level large ("32", or "0" muted) and "Volume · -12.0 dB" beneath. */
+    fun volumeFlash(): Pair<String, String>? {
+        val dsp = AppGraph.audioDspOrNull()?.takeIf { it.ownsVolume } ?: return null
+        val steps = dsp.headphoneVolume
+        val caption = if (steps <= 0) {
+            strings.get(R.string.player_volume_flash_muted)
+        } else {
+            val db = (steps - HeadphoneVolume.MAX) * HeadphoneVolume.STEP_DB
+            strings.get(R.string.player_volume_flash_db, String.format(java.util.Locale.US, "%.1f", db))
+        }
+        return steps.toString() to caption
+    }
+
+    /**
+     * Steps the app's headphone volume (the picker's Volume row, or a keyboard key), heard at once;
+     * the new level worded, or null off headphones, where the TV's own volume applies.
+     */
+    fun stepVolume(direction: Int): String? {
+        val dsp = AppGraph.audioDspOrNull() ?: return null
+        if (!dsp.ownsVolume) return null
+        dsp.stepHeadphoneVolume(direction)
+        val text = volumeText(dsp.headphoneVolume)
+        _state.update { state -> state.withTrackPicker { it.copy(volumeText = text) } }
+        return text
     }
 
     /** The picker's profile row [index]: becomes the current output's profile, heard at once (cross-faded). */

@@ -33,6 +33,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.Call
 import tv.jellybeam.AppGraph
 import tv.jellybeam.MainActivity
+import tv.jellybeam.player.AppVolumePlayer
 import tv.jellybeam.player.AudioDecoderPreferences
 import tv.jellybeam.player.CancelingDataSourceFactory
 import tv.jellybeam.player.JellybeamRenderersFactory
@@ -81,6 +82,9 @@ class MusicService : MediaSessionService() {
     private var g = 0L
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
+
+    /** The session player's app-volume layer, detached with the session. */
+    private var volumePlayer: AppVolumePlayer? = null
     private var sid = 0L
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -121,6 +125,8 @@ class MusicService : MediaSessionService() {
             it.release()
         }
         session = null
+        volumePlayer?.detach()
+        volumePlayer = null
         player?.release()
         player = null
     }
@@ -132,7 +138,8 @@ class MusicService : MediaSessionService() {
             exo.addListener(listener)
             player = exo
             load(exo, session)
-            val media = MediaSession.Builder(this@MusicService, MusicRoutedPlayer(exo, owner::send))
+            val volume = AppVolumePlayer(exo, AppGraph.audioDspOrNull()).also { volumePlayer = it }
+            val media = MediaSession.Builder(this@MusicService, MusicRoutedPlayer(volume, owner::send))
                 .setId(SESSION_ID)
                 .setSessionActivity(
                     PendingIntent.getActivity(this@MusicService, 0, Intent(this@MusicService, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE),

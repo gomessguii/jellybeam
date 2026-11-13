@@ -32,7 +32,8 @@ object AudioProfileCodec {
             }
             append("]}")
         }
-        append("],\"defaults\":{")
+        append("],\"headphoneVolume\":").append(state.headphoneVolume)
+        append(",\"defaults\":{")
         state.defaults.entries.mapNotNull { (k, v) -> outputKeys[k]?.let { it to v } }.forEachIndexed { i, (k, v) ->
             if (i > 0) append(',')
             append(quote(k)).append(':').append(quote(v))
@@ -48,7 +49,8 @@ object AudioProfileCodec {
             val output = outputKeys.entries.firstOrNull { it.value == k }?.key
             if (output != null && v is String && v in ids) output to v else null
         }.toMap()
-        return AudioProfilesState(profiles, defaults)
+        val volume = (root["headphoneVolume"] as? Double)?.toInt()?.let(HeadphoneVolume::clamp) ?: HeadphoneVolume.MAX
+        return AudioProfilesState(profiles, defaults, volume)
     }
 
     private fun decodeProfile(m: Map<*, *>?): AudioProfile? {

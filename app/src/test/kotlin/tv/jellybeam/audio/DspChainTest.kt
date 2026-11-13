@@ -41,7 +41,8 @@ class DspChainTest {
         assertEquals(DspPlan.STEREO, dspPlan(C.ENCODING_PCM_16BIT, 2, headphones = false))
         assertEquals(DspPlan.DOWNMIX, dspPlan(C.ENCODING_PCM_16BIT, 8, headphones = true))
         assertEquals(DspPlan.BYPASS, dspPlan(C.ENCODING_PCM_16BIT, 6, headphones = false))
-        assertEquals(DspPlan.BYPASS, dspPlan(C.ENCODING_PCM_16BIT, 1, headphones = true))
+        assertEquals(DspPlan.DOWNMIX, dspPlan(C.ENCODING_PCM_16BIT, 1, headphones = true))
+        assertEquals(DspPlan.BYPASS, dspPlan(C.ENCODING_PCM_16BIT, 1, headphones = false))
         assertEquals(DspPlan.BYPASS, dspPlan(C.ENCODING_PCM_FLOAT, 2, headphones = true))
     }
 
@@ -56,6 +57,7 @@ class DspChainTest {
         val m51 = checkNotNull(stereoDownmix(6))
         assertEquals(0.0, m51[3][0], 0.0)
         assertEquals(0.0, m51[3][1], 0.0)
+        assertEquals(listOf(1.0, 1.0), checkNotNull(stereoDownmix(1))[0].toList())
         assertNull(stereoDownmix(2))
         assertNull(stereoDownmix(9))
     }
@@ -128,6 +130,21 @@ class DspChainTest {
         val before = run(configured({ crossfeed }), leftTone).let { o -> (3600 until 4800).maxOf { abs(o[it * 2].toInt()) } }
         val after = (1200 until 2400).maxOf { abs(out[it * 2].toInt()) }
         assertEquals(before / 2.0, after.toDouble(), before * 0.05)
+    }
+
+    @Test
+    fun `volume scales the output and glides instead of jumping`() {
+        var gain = 1.0
+        val p = ProfileAudioProcessor({ null }, { true }, { gain }).apply {
+            configure(AudioProcessor.AudioFormat(48000, 2, C.ENCODING_PCM_16BIT))
+            flush()
+        }
+        val steady = List(4800) { 10000 to 10000 }
+        run(p, steady.take(100))
+        gain = 0.5
+        val out = run(p, steady)
+        assertTrue("first sample ${out[0]}", out[0] > 9900)
+        assertEquals(5000, out[out.size - 2].toInt())
     }
 
     @Test

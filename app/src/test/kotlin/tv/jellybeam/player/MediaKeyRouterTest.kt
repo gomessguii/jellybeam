@@ -203,7 +203,12 @@ class MediaKeyRouterTest {
         Player.COMMAND_GET_METADATA,
         Player.COMMAND_GET_AUDIO_ATTRIBUTES,
         Player.COMMAND_GET_TRACKS,
+        // docs/17 §2: the app's headphone volume; AppVolumePlayer offers these only on a headphone route.
         Player.COMMAND_GET_DEVICE_VOLUME,
+        Player.COMMAND_SET_DEVICE_VOLUME,
+        Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
+        Player.COMMAND_ADJUST_DEVICE_VOLUME,
+        Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS,
     )
 
     private fun commandConstants(): Map<String, Int> = Player::class.java.fields

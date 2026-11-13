@@ -226,7 +226,7 @@ object AppGraph {
         appContext = context.applicationContext
         val route = AudioOutputMonitor(appContext).also { it.start() }
         audioRoute = route
-        audioDsp = AudioDsp(File(context.filesDir, "audio_profiles.json"), route.route, processScope)
+        audioDsp = AudioDsp(File(context.filesDir, "audio_profiles.json"), route.route, processScope, route)
 
         // docs/21 §2.2: diag/crash must exist before core construction so a crash there has
         // somewhere to land; this first touch builds them against the real app-private directory.

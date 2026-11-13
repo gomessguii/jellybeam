@@ -317,7 +317,10 @@ audio/subtitle menu swaps the current output's profile mid-playback, every
 swap, edit or route change cross-faded over 20 ms; on a headphone route
 (wired, USB, Bluetooth) audio is decoded to PCM and surround folds to stereo
 first, while speakers and receivers keep passthrough and profiles act on
-stereo PCM only;
+stereo PCM only; an app headphone volume (40 steps of 1.5 dB, glided, shared
+by films and music) for DACs the TV's own volume never reaches -- set from
+Settings › Audio, the player's audio menu, a keyboard's mpv-style keys
+(`-`/`=`, `/`/`*`, with an on-screen level flash) or session volume commands;
 pure-black letterbox background; resume + progress reporting, crash-safe local
 resume checkpoints; trickplay seek preview (the server's own thumbnail
 tiles, region-decoded per tile so no sprite sheet is ever held as a bitmap;

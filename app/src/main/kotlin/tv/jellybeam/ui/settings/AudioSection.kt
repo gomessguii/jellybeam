@@ -52,6 +52,7 @@ import tv.jellybeam.audio.AudioProfile
 import tv.jellybeam.audio.AudioProfilesState
 import tv.jellybeam.audio.CrossfeedParam
 import tv.jellybeam.audio.DspStage
+import tv.jellybeam.audio.HeadphoneVolume
 import tv.jellybeam.audio.PROFILE_OUTPUTS
 import tv.jellybeam.audio.addProfile
 import tv.jellybeam.audio.addStage
@@ -143,6 +144,8 @@ class AudioSettingsViewModel(private val dsp: AudioDsp) : ViewModel() {
 
     fun setDefault(output: AudioOutputKind, id: String?) = dsp.update { it.setDefault(output, id) }
 
+    fun stepHeadphoneVolume(direction: Int) = dsp.stepHeadphoneVolume(direction)
+
     private fun edit(id: String, change: (AudioProfile) -> AudioProfile) = dsp.update { it.updateProfile(id, change) }
 }
 
@@ -155,6 +158,15 @@ private fun Double.format(digits: Int): String = String.format(Locale.US, "%.${d
 
 /** "+1.5" / "-1.0" / "0.0": signed so a gain reads as a change. */
 private fun signedDb(db: Double): String = if (db > 0) "+${db.format(1)}" else db.format(1)
+
+/** "32 · -12.0 dB", or "0 · muted". */
+@Composable
+private fun headphoneVolumeText(steps: Int): String =
+    if (steps <= 0) {
+        stringResource(R.string.player_volume_flash_muted)
+    } else {
+        "$steps · ${stringResource(R.string.settings_audio_gain_value, ((steps - HeadphoneVolume.MAX) * HeadphoneVolume.STEP_DB).format(1))}"
+    }
 
 @Composable
 private fun outputLabel(output: AudioOutputKind): String = stringResource(
@@ -243,7 +255,14 @@ private fun ProfileList(
     newProfileAnchor: FocusRequester,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(ROW_GAP)) {
-        SectionHeader(stringResource(R.string.settings_audio_defaults_header), Modifier.padding(bottom = 4.dp))
+        StepperRow(
+            label = stringResource(R.string.settings_audio_headphone_volume),
+            description = stringResource(R.string.settings_desc_audio_headphone_volume),
+            value = headphoneVolumeText(state.headphoneVolume),
+            onStep = viewModel::stepHeadphoneVolume,
+            key = "audio/headphone_volume",
+        )
+        SectionHeader(stringResource(R.string.settings_audio_defaults_header))
         val options: List<String?> = listOf(null) + state.profiles.map { it.id }
         val noneLabel = stringResource(R.string.settings_audio_profile_none)
         PROFILE_OUTPUTS.forEach { output ->

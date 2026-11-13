@@ -44,14 +44,14 @@ class DspChain(val profile: AudioProfile, sampleRate: Int) {
 enum class DspPlan { BYPASS, STEREO, DOWNMIX }
 
 /**
- * Stereo is always taken so a profile can come and go live; surround is folded only when
- * headphones are the route at configure time, since speakers' and receivers' own processing want
- * the channels. Profiles run on stereo only.
+ * Stereo is always taken so a profile can come and go live; mono and surround are folded to stereo
+ * only when headphones are the route at configure time (so the headphone volume reaches them too),
+ * since speakers' and receivers' own processing want the channels. Profiles run on stereo only.
  */
 fun dspPlan(encoding: Int, channelCount: Int, headphones: Boolean): DspPlan = when {
     encoding != C.ENCODING_PCM_16BIT -> DspPlan.BYPASS
     channelCount == 2 -> DspPlan.STEREO
-    channelCount in 3..8 && headphones -> DspPlan.DOWNMIX
+    (channelCount == 1 || channelCount in 3..8) && headphones -> DspPlan.DOWNMIX
     else -> DspPlan.BYPASS
 }
 
@@ -71,6 +71,7 @@ fun stereoDownmix(channelCount: Int): Array<DoubleArray>? {
     val sr = doubleArrayOf(0.0, MINUS_3DB)
     val bc = doubleArrayOf(MINUS_3DB * MINUS_3DB, MINUS_3DB * MINUS_3DB)
     val rows = when (channelCount) {
+        1 -> arrayOf(doubleArrayOf(1.0, 1.0))
         3 -> arrayOf(fl, fr, c)
         4 -> arrayOf(fl, fr, sl, sr)
         5 -> arrayOf(fl, fr, c, sl, sr)
@@ -86,6 +87,9 @@ fun stereoDownmix(channelCount: Int): Array<DoubleArray>? {
 /** Profile swap cross-fade, so a switch, an edit or a route change never clicks. */
 private const val FADE_MS = 20
 
+/** Volume glide time: a remote press moves the level over this long, never as a zipper-noise jump. */
+private const val VOLUME_GLIDE_MS = 30
+
 /**
  * The sink's PCM stage for audio profiles. [profile] is read every buffer; when it changes, the old
  * and new chains both run for [FADE_MS] and cross-fade, so swaps are live and seamless. Passthrough
@@ -95,7 +99,12 @@ private const val FADE_MS = 20
 class ProfileAudioProcessor(
     private val profile: () -> AudioProfile?,
     private val headphones: () -> Boolean,
+    /** Linear gain after the profile (the app's headphone volume); read every buffer, glided per sample. */
+    private val volume: () -> Double = { 1.0 },
 ) : BaseAudioProcessor() {
+
+    private var gain = 1.0
+    private var gainStep = 1.0
 
     private var plan = DspPlan.BYPASS
     private var sampleRate = 48000
@@ -116,6 +125,7 @@ class ProfileAudioProcessor(
         sampleRate = inputAudioFormat.sampleRate
         downmix = if (plan == DspPlan.DOWNMIX) stereoDownmix(inChannels) else null
         fadeLen = (sampleRate * FADE_MS / 1000).coerceAtLeast(1)
+        gainStep = 1.0 / (sampleRate * VOLUME_GLIDE_MS / 1000).coerceAtLeast(1)
         return AudioProcessor.AudioFormat(sampleRate, 2, C.ENCODING_PCM_16BIT)
     }
 
@@ -125,6 +135,7 @@ class ProfileAudioProcessor(
         val input = inputBuffer.order(ByteOrder.LITTLE_ENDIAN)
         val output = replaceOutputBuffer(frames * 4).order(ByteOrder.LITTLE_ENDIAN)
         follow(profile())
+        val targetGain = volume()
         val matrix = downmix
         repeat(frames) {
             if (matrix == null) {
@@ -149,8 +160,11 @@ class ProfileAudioProcessor(
                 wetNew[1] = wetOld[1] + (wetNew[1] - wetOld[1]) * t
                 if (++fadePos == fadeLen) fadingOut = null
             }
-            output.putShort(toPcm16(wetNew[0]))
-            output.putShort(toPcm16(wetNew[1]))
+            if (gain != targetGain) {
+                gain = if (gain < targetGain) minOf(targetGain, gain + gainStep) else maxOf(targetGain, gain - gainStep)
+            }
+            output.putShort(toPcm16(wetNew[0] * gain))
+            output.putShort(toPcm16(wetNew[1] * gain))
         }
         output.flip()
     }
@@ -176,6 +190,7 @@ class ProfileAudioProcessor(
         current = profile()?.let { DspChain(it, sampleRate) }
         fadingOut = null
         fadePos = fadeLen
+        gain = volume()
     }
 
     override fun onReset() {

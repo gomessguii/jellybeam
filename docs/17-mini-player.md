@@ -76,11 +76,16 @@ The "singleInstance player" shape:
   title is then never loaded), whose FF / REW seek by the viewer's
   skip-forward / skip-back settings (also its reported seek increments), whose
   absolute seeks use the guarded seek path, and whose Play / Pause go through
-  the view model. It offers only play / pause, stop, in-item seeks and the
-  reads the session publishes (an allowlist granted in
+  the view model. It offers only play / pause, stop, in-item seeks, the
+  reads the session publishes and the app's own headphone volume (an allowlist granted in
   `onConnect` to every controller, trusted or not, since a remote remapper or
   the cast shell is an unverifiable app, and reported as the player's commands), so Media3 refuses any
-  other call before it reaches the ExoPlayer around the view model.
+  other call before it reaches the ExoPlayer around the view model. The
+  volume commands exist only while headphones are the route: `AppVolumePlayer`
+  then reports the session as remote playback whose volume is the app's
+  headphone attenuation, so the remote's volume keys (and the system volume
+  UI) adjust that instead of a TV volume a USB DAC never hears; on speakers or
+  a receiver the session is local and the TV's own volume applies.
   `PlaybackScreen` leaves every transport key unconsumed while a session
   exists (`MediaKeys.route`), hidden OSD or not; `PlaybackActivity` swallows
   them, key down and key up, while none does (before the first frame, after a

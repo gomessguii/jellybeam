@@ -28,10 +28,25 @@ data class AudioProfile(
 val PROFILE_OUTPUTS: List<AudioOutputKind> =
     listOf(AudioOutputKind.HEADPHONES, AudioOutputKind.SPEAKERS, AudioOutputKind.EXTERNAL)
 
-/** Everything persisted: the user's profiles, and which one (if any) each output uses. */
+/**
+ * The app's own headphone volume, for routes whose hardware volume the TV ignores (a USB DAC on
+ * TCL): [MAX] steps of [STEP_DB], the top step unity so the app only ever attenuates, 0 muted.
+ */
+object HeadphoneVolume {
+    const val MAX = 40
+    const val STEP_DB = 1.5
+
+    fun clamp(steps: Int): Int = steps.coerceIn(0, MAX)
+
+    /** Linear gain for [steps]; 0 is silence. */
+    fun gain(steps: Int): Double = if (steps <= 0) 0.0 else Math.pow(10.0, (clamp(steps) - MAX) * STEP_DB / 20)
+}
+
+/** Everything persisted: the user's profiles, which one (if any) each output uses, and the headphone volume. */
 data class AudioProfilesState(
     val profiles: List<AudioProfile> = emptyList(),
     val defaults: Map<AudioOutputKind, String> = emptyMap(),
+    val headphoneVolume: Int = HeadphoneVolume.MAX,
 ) {
     fun profile(id: String?): AudioProfile? = id?.let { wanted -> profiles.firstOrNull { it.id == wanted } }
 

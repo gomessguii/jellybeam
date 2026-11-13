@@ -77,8 +77,17 @@ class AudioProfilesTest {
     }
 
     @Test
+    fun `headphone volume tops out at unity and bottoms out silent`() {
+        assertEquals(1.0, HeadphoneVolume.gain(HeadphoneVolume.MAX), 1e-12)
+        assertEquals(0.0, HeadphoneVolume.gain(0), 0.0)
+        // Each step is 1.5 dB: four steps down is -6 dB, about half amplitude.
+        assertEquals(0.501, HeadphoneVolume.gain(HeadphoneVolume.MAX - 4), 0.001)
+        assertEquals(HeadphoneVolume.MAX, HeadphoneVolume.clamp(999))
+    }
+
+    @Test
     fun `the codec round-trips a state`() {
-        val tricky = state.updateProfile("b") { it.copy(name = "Quote \" back\\slash ünïcode\n") }
+        val tricky = state.updateProfile("b") { it.copy(name = "Quote \" back\\slash ünïcode\n") }.copy(headphoneVolume = 27)
         assertEquals(tricky, AudioProfileCodec.decode(AudioProfileCodec.encode(tricky)))
     }
 

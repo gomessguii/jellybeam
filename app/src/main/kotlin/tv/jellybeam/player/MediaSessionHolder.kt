@@ -8,6 +8,7 @@ import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSession.ConnectionResult
+import tv.jellybeam.AppGraph
 
 /**
  * One `MediaSession` publishing [PlayerHolder]'s player to the system UI and Assistant (docs/17 §2): scoped to
@@ -23,7 +24,10 @@ class MediaSessionHolder(
      */
     sessionActivity: PendingIntent,
 ) {
-    private val mediaSession: MediaSession = MediaSession.Builder(context, RoutedPlayer(player, router))
+    /** Hands the remote's volume keys to the app's headphone volume while headphones are the route. */
+    private val volumePlayer = AppVolumePlayer(player, AppGraph.audioDspOrNull())
+
+    private val mediaSession: MediaSession = MediaSession.Builder(context, RoutedPlayer(volumePlayer, router))
         .setSessionActivity(sessionActivity)
         .setCallback(
             object : MediaSession.Callback {
@@ -36,6 +40,7 @@ class MediaSessionHolder(
     /** Releases the `MediaSession` only; the shared player it wrapped is never touched. */
     fun release() {
         mediaSession.release()
+        volumePlayer.detach()
     }
 }
 
@@ -49,8 +54,11 @@ internal fun sessionShouldSurviveStop(inPip: Boolean, finishing: Boolean): Boole
 internal fun grantedCommands(default: ConnectionResult, allowed: IntArray = ALLOWED_COMMANDS): ConnectionResult =
     ConnectionResult.accept(default.availableSessionCommands, allowedCommands(ConnectionResult.DEFAULT_PLAYER_COMMANDS, allowed))
 
-/** Playback, stop, in-item seeks and the reads the session publishes; nothing that changes the queue, tracks, volume or surface. */
-internal val ALLOWED_COMMANDS: IntArray = intArrayOf(
+/**
+ * Playback, stop, in-item seeks, the reads the session publishes, and the app's own headphone volume
+ * ([AppVolumePlayer] offers it only on a headphone route); nothing that changes the queue, tracks or surface.
+ */
+internal val ALLOWED_COMMANDS: IntArray = APP_VOLUME_COMMANDS + intArrayOf(
     Player.COMMAND_PLAY_PAUSE,
     Player.COMMAND_STOP,
     Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
@@ -61,7 +69,6 @@ internal val ALLOWED_COMMANDS: IntArray = intArrayOf(
     Player.COMMAND_GET_METADATA,
     Player.COMMAND_GET_AUDIO_ATTRIBUTES,
     Player.COMMAND_GET_TRACKS,
-    Player.COMMAND_GET_DEVICE_VOLUME,
 )
 
 /** Music brief §1.3: a music queue also takes next and previous track from the remote and the Now Playing card. */
