@@ -10,6 +10,7 @@ import androidx.media3.common.Tracks
 import kotlinx.coroutines.Dispatchers
 import tv.jellybeam.AppGraph
 import tv.jellybeam.R
+import tv.jellybeam.audio.PROFILE_OUTPUTS
 import tv.jellybeam.data.runCatchingCancellable
 import tv.jellybeam.i18n.UiStrings
 import tv.jellybeam.data.CoreGateway
@@ -518,12 +519,21 @@ data class TrackPickerState(
     val subtitleTracks: List<TrackChoice>,
     /** docs/12 §16: the delay, already worded, trailing the final "Delay" row. */
     val delayText: String = "",
+    /** Audio profile rows ("None" first) for the current output; empty when there are no profiles. */
+    val profileChoices: List<TrackChoice> = emptyList(),
+    /** The profile id behind each of [profileChoices], null for "None". */
+    val profileIds: List<String?> = emptyList(),
+    /** The output those profiles apply to, already worded, e.g. "Headphones". */
+    val profileOutput: String = "",
 ) {
     /** docs/12 §16: the "Delay" row ends the list exactly while a real subtitle (embedded or sidecar) is selected. */
     val delayRowShown: Boolean get() = subtitleTracks.any { it.selected && it.id >= 0 }
 
-    /** Rows in the one focus order: audio, subtitles, then the Delay row. */
-    val rowCount: Int get() = audioTracks.size + subtitleTracks.size + if (delayRowShown) 1 else 0
+    /** Rows in the one focus order: audio, subtitles, the Delay row, then the profiles. */
+    val rowCount: Int get() = profileRowStart + profileChoices.size
+
+    /** Focus index of the first profile row. */
+    val profileRowStart: Int get() = audioTracks.size + subtitleTracks.size + if (delayRowShown) 1 else 0
 }
 
 /**
@@ -2320,11 +2330,48 @@ class PlaybackViewModel(
                 isDefault = info.isDefault,
             )
         }
-        return TrackPickerState(
-            audioTracks = audioChoices,
-            subtitleTracks = subtitleChoices(tracks),
-            delayText = SubtitleDelay.format(strings, playerHolder.subtitleDelayMs),
+        return withProfiles(
+            TrackPickerState(
+                audioTracks = audioChoices,
+                subtitleTracks = subtitleChoices(tracks),
+                delayText = SubtitleDelay.format(strings, playerHolder.subtitleDelayMs),
+            ),
         )
+    }
+
+    /** Adds the current output's profile rows; none when there are no profiles or the output can't take one. */
+    private fun withProfiles(picker: TrackPickerState): TrackPickerState {
+        val dsp = AppGraph.audioDspOrNull() ?: return picker
+        val profiles = dsp.state.value
+        val output = dsp.currentOutput
+        if (profiles.profiles.isEmpty() || output !in PROFILE_OUTPUTS) return picker
+        val selectedId = profiles.defaults[output]
+        val ids = listOf<String?>(null) + profiles.profiles.map { it.id }
+        val choices = ids.mapIndexed { index, id ->
+            TrackChoice(
+                id = index.toLong(),
+                label = profiles.profile(id)?.name ?: strings.get(R.string.settings_audio_profile_none),
+                selected = id == selectedId,
+            )
+        }
+        val outputLabel = strings.get(
+            when (output) {
+                AudioOutputKind.HEADPHONES -> R.string.settings_audio_output_headphones
+                AudioOutputKind.SPEAKERS -> R.string.settings_audio_output_speakers
+                else -> R.string.settings_audio_output_external
+            },
+        )
+        return picker.copy(profileChoices = choices, profileIds = ids, profileOutput = outputLabel)
+    }
+
+    /** The picker's profile row [index]: becomes the current output's profile, heard at once (cross-faded). */
+    fun chooseProfile(index: Int) {
+        val picker = _state.value.trackPicker ?: return
+        if (index !in picker.profileIds.indices) return
+        AppGraph.audioDspOrNull()?.selectForCurrentOutput(picker.profileIds[index])
+        _state.update { state ->
+            state.withTrackPicker { p -> p.copy(profileChoices = p.profileChoices.mapIndexed { i, c -> c.copy(selected = i == index) }) }
+        }
     }
 
     /** docs/18 §3.2: subtitle rows, "Off" first and selected exactly when no real subtitle is. */

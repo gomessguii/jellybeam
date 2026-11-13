@@ -78,6 +78,9 @@ internal enum class SettingsSection(val labelRes: Int) {
     // not filed under Home.
     LIBRARY(R.string.settings_section_library),
     PLAYBACK(R.string.settings_section_playback),
+    // User-made audio profiles (crossfeed, ...) and which one each output plays through; stored
+    // app-side by tv.jellybeam.audio.AudioDsp, outside the `Settings` record.
+    AUDIO(R.string.settings_section_audio),
     // Player OSD density preference (docs/jellybeam-osd-handoff §7/§11); its own section since it
     // configures the player screen itself, not a playback behavior.
     OSD(R.string.settings_section_osd),
@@ -928,7 +931,7 @@ internal fun DiscoverSectionContent(
  * same way [ToggleRow]/[SettingsChip] register theirs.
  */
 @Composable
-private fun DiscoverTextField(
+internal fun DiscoverTextField(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,

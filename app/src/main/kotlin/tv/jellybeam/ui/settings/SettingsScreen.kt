@@ -212,6 +212,7 @@ fun SettingsScreen(
                                 )
                                 SettingsSection.LIBRARY -> LibrarySectionContent(state, viewModel)
                                 SettingsSection.PLAYBACK -> PlaybackSectionContent(state, viewModel)
+                                SettingsSection.AUDIO -> AudioSectionContent()
                                 SettingsSection.OSD -> OsdSectionContent(state, viewModel)
                                 SettingsSection.SUBTITLES -> SubtitlesSectionContent(state, viewModel)
                                 SettingsSection.DISCOVER -> DiscoverSectionContent()

@@ -24,6 +24,7 @@ import coil.request.ImageRequest
 import coil.request.SuccessResult
 import coil.transition.CrossfadeTransition
 import coil.transition.Transition
+import tv.jellybeam.audio.AudioDsp
 import tv.jellybeam.data.CoreGateway
 import tv.jellybeam.data.LaunchWarmup
 import tv.jellybeam.data.RealCoreGateway
@@ -157,6 +158,15 @@ object AppGraph {
     /** Null before [init] (JVM tests), so the renderers factory runs without a monitor there. */
     fun audioRouteOrNull(): AudioOutputMonitor? = audioRoute
 
+    /** The user's audio profiles and the one the current route plays through, started in [init]. */
+    private var audioDsp: AudioDsp? = null
+
+    /** Null before [init] (JVM tests), so the audio processor plays unprocessed there. */
+    fun audioDspOrNull(): AudioDsp? = audioDsp
+
+    /** The started [AudioDsp]; only for UI reached after [init]. */
+    val audioProfiles: AudioDsp get() = checkNotNull(audioDsp)
+
     /** Trickplay sheet transport (docs/12 §11): the player's OkHttp client plus a small file
      * cache under the app cache dir. */
     val trickplayFetcher: SheetFetcher by lazy { OkHttpSheetFetcher(httpClient, File(appContext.cacheDir, "trickplay")) }
@@ -214,7 +224,9 @@ object AppGraph {
         if (::gateway.isInitialized) return
 
         appContext = context.applicationContext
-        audioRoute = AudioOutputMonitor(appContext).also { it.start() }
+        val route = AudioOutputMonitor(appContext).also { it.start() }
+        audioRoute = route
+        audioDsp = AudioDsp(File(context.filesDir, "audio_profiles.json"), route.route, processScope)
 
         // docs/21 §2.2: diag/crash must exist before core construction so a crash there has
         // somewhere to land; this first touch builds them against the real app-private directory.

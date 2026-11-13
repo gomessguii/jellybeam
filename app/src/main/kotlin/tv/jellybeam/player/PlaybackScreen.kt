@@ -1367,6 +1367,8 @@ fun PlaybackScreen(
                             picker.audioTracks.getOrNull(pickerFocusIndex)?.let { viewModel.chooseAudio(it.id) }
                         } else if (pickerFocusIndex < audioCount + picker.subtitleTracks.size) {
                             picker.subtitleTracks.getOrNull(pickerFocusIndex - audioCount)?.let { viewModel.chooseSubtitle(it.id) }
+                        } else if (pickerFocusIndex >= picker.profileRowStart) {
+                            viewModel.chooseProfile(pickerFocusIndex - picker.profileRowStart)
                         } else {
                             // docs/12 §16: the Delay row swaps the picker for the strip; the delayOpen effect hides the OSD.
                             viewModel.openSubtitleDelay()
@@ -3209,6 +3211,20 @@ private fun ColumnScope.TrackPickerRows(picker: TrackPickerState, focusedIndex: 
             TrackChoice(id = TRACK_PICKER_DELAY_ROW_ID, label = delayLabel, selected = false, meta = picker.delayText)
         }
         TrackChoiceRow(choice = delayRow, isFocused = audioCount + picker.subtitleTracks.size == focusedIndex)
+    }
+
+    // The current output's audio profiles, last so track choices keep their places.
+    if (picker.profileChoices.isNotEmpty()) {
+        Spacer(modifier = Modifier.height(16.dp))
+        TrackPickerSectionHeader(text = "${stringResource(R.string.player_picker_audio_profile)} · ${picker.profileOutput}")
+        Spacer(modifier = Modifier.height(8.dp))
+        picker.profileChoices.forEachIndexed { index, choice ->
+            TrackChoiceRow(
+                choice = choice,
+                isFocused = picker.profileRowStart + index == focusedIndex,
+                revealAbove = if (index == 0) TRACK_SECTION_HEAD_REVEAL else 0.dp,
+            )
+        }
     }
 }
 

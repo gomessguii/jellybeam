@@ -25,6 +25,7 @@ import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
 import androidx.media3.exoplayer.video.VideoRendererEventListener
 import tv.jellybeam.AppGraph
+import tv.jellybeam.audio.ProfileAudioProcessor
 import tv.jellybeam.perf.PerfLog
 import tv.jellybeam.visualizer.tap.PcmTap
 
@@ -273,7 +274,14 @@ class JellybeamRenderersFactory(
      */
     override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioOutputPlaybackParams: Boolean): AudioSink =
         DefaultAudioSink.Builder(context)
-            .setAudioProcessors(arrayOf(CrossfeedAudioProcessor(headphones = { AppGraph.audioRouteOrNull()?.isHeadphones == true })))
+            .setAudioProcessors(
+                arrayOf(
+                    ProfileAudioProcessor(
+                        profile = { AppGraph.audioDspOrNull()?.activeProfile },
+                        headphones = { AppGraph.audioRouteOrNull()?.isHeadphones == true },
+                    ),
+                ),
+            )
             .setEnableFloatOutput(enableFloatOutput)
             .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
             .setAudioOutputProvider(audioOutputProvider(context))

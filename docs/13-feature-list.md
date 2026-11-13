@@ -308,11 +308,16 @@ unmodified, so Atmos engages where other clients' paths lose it;
 tolerate-mislabeled-codec-levels toggle (device-profile + player
 decoder selection, default on); FFmpeg TrueHD/DTS/DTS-HD decoder preference
 toggles (local renderer choice only, never affects Direct Play negotiation);
-headphone crossfeed: on a headphone route (wired, USB, Bluetooth) audio is
-decoded to PCM, surround folds to stereo and an FFmpeg-exact crossfeed
-(strength 0.35, range 0.8, slope 0.5) is applied, fading in and out within
-20 ms as the route changes; speakers and receivers keep passthrough and get
-the signal untouched;
+audio profiles: user-made DSP chains (Settings › Audio; none ship built in),
+each an ordered list of stages -- so far an FFmpeg-exact crossfeed (strength,
+range, slope) -- plus an output gain for level-matched comparisons, edited
+on the TV with Left/Right steppers and heard live while playing; each output
+(headphones, TV speakers, receiver) picks a profile or None, and the player's
+audio/subtitle menu swaps the current output's profile mid-playback, every
+swap, edit or route change cross-faded over 20 ms; on a headphone route
+(wired, USB, Bluetooth) audio is decoded to PCM and surround folds to stereo
+first, while speakers and receivers keep passthrough and profiles act on
+stereo PCM only;
 pure-black letterbox background; resume + progress reporting, crash-safe local
 resume checkpoints; trickplay seek preview (the server's own thumbnail
 tiles, region-decoded per tile so no sprite sheet is ever held as a bitmap;
