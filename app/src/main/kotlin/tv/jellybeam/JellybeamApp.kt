@@ -34,6 +34,7 @@ import tv.jellybeam.diag.DiagLog
 import tv.jellybeam.diag.DiagSinkBridge
 import tv.jellybeam.perf.PerfAccumulator
 import tv.jellybeam.perf.PerfLog
+import tv.jellybeam.player.AudioOutputMonitor
 import tv.jellybeam.player.DeviceCapsProbe
 import tv.jellybeam.player.OkHttpSheetFetcher
 import tv.jellybeam.player.SheetFetcher
@@ -150,6 +151,12 @@ object AppGraph {
      */
     val playerHolder: PlayerHolder by lazy { PlayerHolder(appContext, httpClient) }
 
+    /** The media output route (headphones vs speakers), started in [init]. */
+    private var audioRoute: AudioOutputMonitor? = null
+
+    /** Null before [init] (JVM tests), so the renderers factory runs without a monitor there. */
+    fun audioRouteOrNull(): AudioOutputMonitor? = audioRoute
+
     /** Trickplay sheet transport (docs/12 §11): the player's OkHttp client plus a small file
      * cache under the app cache dir. */
     val trickplayFetcher: SheetFetcher by lazy { OkHttpSheetFetcher(httpClient, File(appContext.cacheDir, "trickplay")) }
@@ -207,6 +214,7 @@ object AppGraph {
         if (::gateway.isInitialized) return
 
         appContext = context.applicationContext
+        audioRoute = AudioOutputMonitor(appContext).also { it.start() }
 
         // docs/21 §2.2: diag/crash must exist before core construction so a crash there has
         // somewhere to land; this first touch builds them against the real app-private directory.

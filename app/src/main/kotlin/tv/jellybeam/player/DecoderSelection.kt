@@ -24,6 +24,7 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
 import androidx.media3.exoplayer.video.VideoRendererEventListener
+import tv.jellybeam.AppGraph
 import tv.jellybeam.perf.PerfLog
 import tv.jellybeam.visualizer.tap.PcmTap
 
@@ -272,6 +273,7 @@ class JellybeamRenderersFactory(
      */
     override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioOutputPlaybackParams: Boolean): AudioSink =
         DefaultAudioSink.Builder(context)
+            .setAudioProcessors(arrayOf(CrossfeedAudioProcessor(headphones = { AppGraph.audioRouteOrNull()?.isHeadphones == true })))
             .setEnableFloatOutput(enableFloatOutput)
             .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
             .setAudioOutputProvider(audioOutputProvider(context))
@@ -279,7 +281,7 @@ class JellybeamRenderersFactory(
 
     /** The guarded output provider, with the visualizer tap only on the music player (docs/30 §2). */
     internal fun audioOutputProvider(context: Context): PlausibleClockAudioOutputProvider =
-        PlausibleClockAudioOutputProvider(AudioTrackAudioOutputProvider.Builder(context).build(), musicTap)
+        PlausibleClockAudioOutputProvider(AudioTrackAudioOutputProvider.Builder(context).build(), musicTap, AppGraph.audioRouteOrNull())
 
     @OptIn(UnstableApi::class)
     override fun buildVideoRenderers(

@@ -1,5 +1,8 @@
 package tv.jellybeam.player
 
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackParameters
@@ -7,6 +10,7 @@ import androidx.media3.common.util.Clock
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.AudioOutput
 import androidx.media3.exoplayer.audio.AudioOutputProvider
+import androidx.media3.exoplayer.audio.AudioTrackAudioOutput
 import androidx.media3.exoplayer.audio.ForwardingAudioOutput
 import androidx.media3.exoplayer.audio.ForwardingAudioOutputProvider
 import java.nio.ByteBuffer
@@ -333,6 +337,8 @@ internal class PlausibleClockAudioOutput(
     ),
     /** docs/30 §2: sees every consumed buffer, flush and position; null on the video player. */
     private val tap: PcmTap? = null,
+    /** Runs before the delegate releases; detaches this output's [AudioTrackRouteWatch]. */
+    private val onRelease: () -> Unit = {},
 ) : ForwardingAudioOutput(delegate) {
 
     private val nowUs: Long get() = clock.nanoTime() / 1000
@@ -383,6 +389,7 @@ internal class PlausibleClockAudioOutput(
     override fun release() {
         reporter.onRelease(guard)
         if (guard.clampCount == 0 && guard.learnedLagUs != C.TIME_UNSET) onLagLearned(guard.learnedLagUs)
+        onRelease()
         super.release()
     }
 
@@ -401,7 +408,36 @@ internal class PlausibleClockAudioOutput(
 internal class PlausibleClockAudioOutputProvider(
     delegate: AudioOutputProvider,
     private val tap: PcmTap? = null,
+    /** Learns each AudioTrack-backed output's routed device and gates passthrough on it; null leaves routing alone. */
+    private val route: AudioRouteHub? = null,
 ) : ForwardingAudioOutputProvider(delegate) {
+
+    /** Sink listeners with the playback looper each was added on, where Media3 expects its callbacks. */
+    private val listeners = java.util.concurrent.CopyOnWriteArrayList<Pair<AudioOutputProvider.Listener, Handler>>()
+
+    init {
+        // A headphone flip changes what formats are "supported", so the player re-picks passthrough vs decode.
+        route?.addHeadphonesListener {
+            listeners.forEach { (listener, handler) -> handler.post { listener.onFormatSupportChanged() } }
+        }
+    }
+
+    override fun addListener(listener: AudioOutputProvider.Listener) {
+        super.addListener(listener)
+        listeners += listener to Handler(Looper.myLooper() ?: Looper.getMainLooper())
+    }
+
+    override fun removeListener(listener: AudioOutputProvider.Listener) {
+        listeners.removeAll { it.first === listener }
+        super.removeListener(listener)
+    }
+
+    override fun getFormatSupport(formatConfig: AudioOutputProvider.FormatConfig): AudioOutputProvider.FormatSupport =
+        if (forcePcmForRoute(formatConfig.format.sampleMimeType, route?.isHeadphones == true)) {
+            AudioOutputProvider.FormatSupport.UNSUPPORTED
+        } else {
+            super.getFormatSupport(formatConfig)
+        }
 
     private var clock: Clock = Clock.DEFAULT
 
@@ -415,12 +451,20 @@ internal class PlausibleClockAudioOutputProvider(
     }
 
     override fun getAudioOutput(config: AudioOutputProvider.OutputConfig): AudioOutput {
+        val delegate = super.getAudioOutput(config)
+        val outputId = nextOutputIdSource.getAndIncrement()
+        val routeWatch = route?.let { sink ->
+            val track = (delegate as? AudioTrackAudioOutput)?.audioTrack
+            if (track != null && Build.VERSION.SDK_INT >= 24) AudioTrackRouteWatch(track, outputId, sink) else null
+        }
         val output = PlausibleClockAudioOutput(
-            delegate = super.getAudioOutput(config),
+            delegate = delegate,
             clock = clock,
             guard = AudioClockGuard(lagUs = healthyLagUs),
             onLagLearned = { healthyLagUs = it },
+            outputId = outputId,
             tap = tap,
+            onRelease = { routeWatch?.release() },
         )
         tap?.configure(config.encoding, config.sampleRate, Integer.bitCount(config.channelMask), config.isOffload)
         return output
