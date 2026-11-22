@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
+import androidx.media3.exoplayer.ExoPlaybackException
 import kotlinx.coroutines.Dispatchers
 import tv.jellybeam.AppGraph
 import tv.jellybeam.R
@@ -305,6 +306,8 @@ data class PlaybackUiState internal constructor(
      * [PlaybackViewModel.evaluateNextUp] only ever sets one, per
      * [uniffi.jellybeam_core.StillWatchingDecision]. */
     val stillWatching: StillWatchingState? = null,
+    /** docs/18 §1.2: the error dialog over the paused frame; while set, it owns every key. */
+    val playbackError: PlaybackErrorState? = null,
     /** docs/12 §14: the post-skip Undo toast; set by [PlaybackViewModel.skipSegment], cleared by undo,
      * dismissal or its [SKIP_UNDO_WINDOW_MS] expiry. */
     val skipUndo: SkipUndoState? = null,
@@ -788,6 +791,9 @@ class PlaybackViewModel(
      */
     private var sessionFailedTrack: FailedTrackFfi? = null
 
+    /** docs/18 §1.2: Media3 format ids of this item's audio tracks that already failed, never offered again. */
+    private val failedAudioFormatIds = mutableSetOf<String>()
+
     /** docs/18 §2.1: the newest playback request this view model minted, the only one whose plan,
      * error or Finish may publish; `null` once stopped, abandoned or closed for an account change.
      */
@@ -1110,7 +1116,7 @@ class PlaybackViewModel(
             if (ReconnectPolicy.isRecoverable(error)) {
                 (mode as? PlayerMode.Group)?.send { GroupEvent.PlayerError(it, SyncPlaySeverity.RECOVERABLE) }
                 beginOrContinueReconnect()
-            } else if (!maybeFallBackToTranscode("Playback error: ${error.errorCodeName}", LocalPlayability.failedTrack(error))) {
+            } else if (!showPlaybackError(error) && !maybeFallBackToTranscode("Playback error: ${error.errorCodeName}", LocalPlayability.failedTrack(error))) {
                 // docs/18 §1's first local-evidence signal (the other is
                 // onTracksChanged above) -- ordinary fatal path once the fallback
                 // gate declines.
@@ -1512,6 +1518,8 @@ class PlaybackViewModel(
         logPlan(itemId, plan)
         transcodeFallbackAttempted = false // docs/18 §1: one fallback per item
         sessionFailedTrack = null
+        failedAudioFormatIds.clear() // docs/18 §1.2: a failed track is per item
+        _state.update { it.copy(playbackError = null) }
         negotiation = null // a previous item's, whose stop already revoked it
         errorDuringNegotiation = false
         owner = SessionOwner.Playing(scope)
@@ -2668,12 +2676,12 @@ class PlaybackViewModel(
      * series, remembers the choice via [CoreGateway.rememberTrackMemory]. A Movie applies the
      * override but skips remembering (nothing to key on). A no-op if [id] doesn't resolve to a
      * currently-known audio track. Flips [TrackChoice.selected] optimistically in the held
-     * [TrackPickerState] rather than waiting for a real `onTracksChanged`.
+     * [TrackPickerState] rather than waiting for a real `onTracksChanged`. Returns whether it applied.
      */
-    fun chooseAudio(id: Long) {
-        val tracks = playerHolder.currentTracks ?: return
+    fun chooseAudio(id: Long): Boolean {
+        val tracks = playerHolder.currentTracks ?: return false
         val trackInfos = allTrackInfos(tracks)
-        val info = trackInfos.firstOrNull { it.kind == TrackKindFfi.AUDIO && it.id == id } ?: return
+        val info = trackInfos.firstOrNull { it.kind == TrackKindFfi.AUDIO && it.id == id } ?: return false
 
         // A manual pick always wins -- cancel any pending automatic resolution
         // outright rather than relying solely on its own after-the-fact recheck.
@@ -2689,6 +2697,7 @@ class PlaybackViewModel(
                 nonDefaultTrackActive = computeNonDefaultTrackActive(applyDecisionToTrackInfos(trackInfos, decision)),
             ).withTrackPicker { picker -> picker.copy(audioTracks = picker.audioTracks.map { it.copy(selected = it.id == id) }) }
         }
+        return true
     }
 
     /** Chooses [id] as the subtitle track, or [TRACK_PICKER_SUBTITLE_OFF_ID] to disable subtitles
@@ -3435,6 +3444,98 @@ class PlaybackViewModel(
     /** Error path: discards the session without a final report; a session prepare never opened has nothing to abandon. */
     private fun abandonPlaybackOnce() {
         endSessionOnce(keep = null) { id -> id?.let { reportScope.launch { runCatchingCancellable { gateway.abandonPlayback(it) } } } }
+    }
+
+    /**
+     * docs/18 §1.2: opens the error dialog for a fatal [error] instead of closing on a toast, so
+     * the error is readable and a fallback is the viewer's choice. An audio failure offers the
+     * item's other audio tracks and, when allowed, the transcode fallback; any other error offers
+     * Close only, and still falls back automatically when it can, as before. Declines (`false`)
+     * before the first frame, when no player UI is up, and in a group (docs/28).
+     */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class) // ExoPlaybackException.type/rendererFormat, as LocalPlayability reads them
+    private fun showPlaybackError(error: PlaybackException): Boolean {
+        if (mode is PlayerMode.Group || !playbackWasActive || _state.value.phase != PlaybackUiState.Phase.READY) return false
+        val audioFailure = LocalPlayability.failedTrack(error) == FailedTrackFfi.AUDIO
+        if (!audioFailure && fallbackPossible()) return false
+        val tracks = playerHolder.currentTracks ?: Tracks.EMPTY
+        val infos = allTrackInfos(tracks)
+        val audio = infos.filter { it.kind == TrackKindFfi.AUDIO }
+        val formatIds = TrackMapping.audioFormatIds(tracks)
+        val rendererFormatId = (error as? ExoPlaybackException)
+            ?.takeIf { it.type == ExoPlaybackException.TYPE_RENDERER }
+            ?.rendererFormat?.id
+        val failedId = if (audioFailure) PlaybackErrorRules.failedAudioTrackId(audio, formatIds, rendererFormatId) else null
+        failedId?.let { id -> formatIds[id]?.let { failedAudioFormatIds += it } }
+        val excluded = formatIds.filterValues { it != null && it in failedAudioFormatIds }.keys
+        val candidates = if (audioFailure) PlaybackErrorRules.switchCandidates(audio, failedId, excluded) else emptyList()
+
+        fun trackLabel(info: uniffi.jellybeam_core.TrackInfo) = TrackChoiceText.label(strings, info, audio.indexOf(info))
+        fun trackMeta(info: uniffi.jellybeam_core.TrackInfo) = TrackChoiceText.meta(strings, info, external = false)
+        val options = PlaybackErrorRules.actions(candidates, transcodeAllowed = audioFailure && fallbackPossible()).map { action ->
+            when (action) {
+                is PlaybackErrorAction.SwitchAudio -> candidates.first { it.id == action.trackId }.let {
+                    PlaybackErrorOption(action, trackLabel(it), trackMeta(it))
+                }
+                PlaybackErrorAction.Transcode -> PlaybackErrorOption(action, strings.get(R.string.player_error_option_transcode))
+                PlaybackErrorAction.Close -> PlaybackErrorOption(action, strings.get(R.string.player_error_option_close))
+            }
+        }
+        val failedTrack = audio.firstOrNull { it.id == failedId }?.let { info ->
+            trackMeta(info)?.let { strings.get(R.string.player_track_meta_join, trackLabel(info), it) } ?: trackLabel(info)
+        }
+        val message = when {
+            !audioFailure -> fatalPlaybackMessage(strings, error.errorCodeName, currentPlan)
+            candidates.isNotEmpty() -> strings.get(R.string.player_error_audio_switch_hint)
+            else -> strings.get(R.string.player_error_audio_no_other)
+        }
+        AppGraph.diag.event("player.errorDialog") {
+            tag("code", error.errorCodeName)
+            tag("track", if (audioFailure) "audio" else "other")
+            num("switches", candidates.size.toLong())
+            ms("posMs", PlaybackTicks.ticksToMs(_positionTicks.value))
+        }
+        clearReconnectState()
+        closeSurface()
+        _state.update {
+            it.copy(
+                playbackError = PlaybackErrorState(
+                    title = strings.get(if (audioFailure) R.string.player_error_audio_title else R.string.player_error_title),
+                    message = message,
+                    failedTrack = failedTrack,
+                    code = error.errorCodeName,
+                    cause = PlaybackErrorRules.causeSummary(error),
+                    options = options,
+                    positionTicks = _positionTicks.value,
+                ),
+            )
+        }
+        return true
+    }
+
+    /**
+     * docs/18 §1.2: runs the dialog row the viewer chose. A switch applies the track like a picker
+     * choice and retries from where playback failed; Transcode takes the fallback; Close, Back or a
+     * switch whose track no longer resolves ends playback as the fatal path always did.
+     */
+    fun choosePlaybackErrorOption(action: PlaybackErrorAction) {
+        val shown = _state.value.playbackError ?: return
+        _state.update { it.copy(playbackError = null) }
+        when (action) {
+            is PlaybackErrorAction.SwitchAudio -> {
+                if (!chooseAudio(action.trackId)) return closeAfterPlaybackError(shown.code)
+                val position = SeekGuard.recoveryPositionTicks(_state.value.seekability, shown.positionTicks)
+                playerHolder.retryAfterError(position, playing = true)
+            }
+            PlaybackErrorAction.Transcode ->
+                if (!maybeFallBackToTranscode("Playback error: ${shown.code}", FailedTrackFfi.AUDIO)) closeAfterPlaybackError(shown.code)
+            PlaybackErrorAction.Close -> closeAfterPlaybackError(shown.code)
+        }
+    }
+
+    private fun closeAfterPlaybackError(code: String) {
+        finishAfterFatalPlaybackError(code)
+        _events.tryEmit(PlaybackEvent.Finish)
     }
 
     /** A failure before playback ever became active has no trustworthy position, so it abandons;

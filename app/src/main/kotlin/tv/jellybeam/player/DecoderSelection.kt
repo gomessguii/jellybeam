@@ -53,6 +53,14 @@ fun shouldPreferFfmpegAudio(sampleMimeType: String?, preferences: AudioDecoderPr
     }
 
 /**
+ * docs/18 §1.3: multichannel FLAC always decodes in FFmpeg. The platform FLAC decoder is software
+ * too, and on a tested device its output crashed Media3's audio sink seconds into playback; stereo
+ * FLAC keeps the platform decoder it has always played on.
+ */
+fun prefersFfmpegByDefault(sampleMimeType: String?, channelCount: Int): Boolean =
+    sampleMimeType == MimeTypes.AUDIO_FLAC && channelCount > 2
+
+/**
  * Bogus-declared-level tolerance (CLAUDE.md task evidence): some HEVC Main10 HDR10 files declare an
  * inflated bitstream level meant for far higher resolutions, while a device's real decoder ceiling
  * is honest and lower. [MediaCodecVideoRenderer.getDecoderInfos] (not [MediaCodecSelector], which
@@ -261,7 +269,9 @@ class JellybeamRenderersFactory(
         audioSink,
     ) {
         override fun supportsFormat(mediaCodecSelector: MediaCodecSelector, format: Format): Int =
-            if (shouldPreferFfmpegAudio(format.sampleMimeType, preferences())) {
+            if (shouldPreferFfmpegAudio(format.sampleMimeType, preferences()) ||
+                prefersFfmpegByDefault(format.sampleMimeType, format.channelCount)
+            ) {
                 RendererCapabilities.create(C.FORMAT_UNSUPPORTED_SUBTYPE)
             } else {
                 super.supportsFormat(mediaCodecSelector, format)

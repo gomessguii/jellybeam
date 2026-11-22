@@ -58,6 +58,15 @@ object TrackMapping {
         return result
     }
 
+    /** Each audio track's id -> its Media3 [Format.id] (the container's track id, stable within an item), for docs/18 §1.2. */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun audioFormatIds(tracks: Tracks): Map<Long, String?> = buildMap {
+        tracks.groups.forEachIndexed { groupIndex, group ->
+            if (group.mediaTrackGroup.type != C.TRACK_TYPE_AUDIO) return@forEachIndexed
+            for (trackIndex in 0 until group.length) put(toId(groupIndex, trackIndex), group.getTrackFormat(trackIndex).id)
+        }
+    }
+
     /** The id one `(groupIndex, trackIndex)` pair maps to, per this object's id scheme. */
     fun toId(groupIndex: Int, trackIndex: Int): Long =
         groupIndex.toLong() * GROUP_ID_MULTIPLIER + trackIndex.toLong()

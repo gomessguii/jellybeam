@@ -299,7 +299,11 @@ act as the key's owner rather than you.
 transcode; Auto Direct Plays whatever this TV can decode and transcodes only
 on local evidence (no declared decoder for the codec, the tolerate-levels
 setting off, a software-only decoder, a decode error, or no supported track);
-20/8/3 Mbps presets transcode everything at that rate. The OSD's Direct Play line and
+20/8/3 Mbps presets transcode everything at that rate. A fatal error mid-play
+opens an error dialog over the paused frame instead of closing on a toast: it
+shows the error code and cause and, when an audio track failed, offers the
+item's other audio tracks (resuming from the same spot), the transcode
+fallback when allowed, and Close (docs/18 §1.2). The OSD's Direct Play line and
 stats headline read TRANSCODE with the reason when one is active; Media3
 ExoPlayer + Jellyfin's FFmpeg
 audio decoder extension; HDR10/Dolby Vision passthrough as-is; Dolby Atmos
@@ -656,7 +660,7 @@ public display.)*
 - Jellyfin's own FFmpeg audio decoder extension is bundled, so TrueHD,
   DTS, DTS-HD, and EAC3 decode on-device instead of forcing a server-side
   transcode; TrueHD/DTS/DTS-HD each have their own on/off preference in
-  Settings.
+  Settings. Multichannel FLAC always decodes in FFmpeg too (docs/18 §1.3).
   <!-- verified: gradle/libs.versions.toml jellyfin-media3-ffmpeg-decoder; core/jellyfin-core/src/device_profile.rs ANDROID_DIRECT_PLAY_AUDIO_CODECS; app/src/main/kotlin/tv/jellybeam/ui/settings/SettingsSections.kt preferFfmpegTrueHd/preferFfmpegDts/preferFfmpegDtsHd -->
 - Embedded subtitles just work, because Direct Play delivers the whole
   file: SRT, TTML, WebVTT, ASS/SSA, and bitmap PGS/VobSub tracks all

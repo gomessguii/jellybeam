@@ -1,6 +1,7 @@
 package tv.jellybeam.player
 
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.BaseRenderer
 import androidx.media3.exoplayer.Renderer
@@ -53,6 +54,15 @@ class DecoderSelectionTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun `only multichannel FLAC goes to FFmpeg by default`() {
+        assertTrue(prefersFfmpegByDefault(MimeTypes.AUDIO_FLAC, 8))
+        assertTrue(prefersFfmpegByDefault(MimeTypes.AUDIO_FLAC, 6))
+        assertFalse(prefersFfmpegByDefault(MimeTypes.AUDIO_FLAC, 2))
+        assertFalse(prefersFfmpegByDefault(MimeTypes.AUDIO_FLAC, Format.NO_VALUE))
+        assertFalse(prefersFfmpegByDefault(MimeTypes.AUDIO_E_AC3, 8))
     }
 
     @Test

@@ -146,4 +146,27 @@ class LocalPlayabilityTest {
             LocalPlayability.failedTrack(PlaybackException("boom", null, PlaybackException.ERROR_CODE_DECODING_FAILED)),
         )
     }
+
+    @Test
+    fun `an unexpected error is audio only when thrown inside the audio pipeline`() {
+        fun unexpected(vararg classNames: String): ExoPlaybackException {
+            val cause = IllegalArgumentException()
+            cause.stackTrace = classNames.map { StackTraceElement(it, "run", "Synthetic.java", 1) }.toTypedArray()
+            return ExoPlaybackException.createForUnexpected(
+                RuntimeException("wrapper", cause),
+                PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK,
+            )
+        }
+        assertEquals(
+            FailedTrackFfi.AUDIO,
+            LocalPlayability.failedTrack(
+                unexpected("com.google.common.base.Preconditions", "androidx.media3.exoplayer.audio.DefaultAudioSink"),
+            ),
+        )
+        assertEquals(
+            FailedTrackFfi.UNKNOWN,
+            LocalPlayability.failedTrack(unexpected("androidx.media3.exoplayer.video.MediaCodecVideoRenderer")),
+        )
+        assertEquals(FailedTrackFfi.UNKNOWN, LocalPlayability.failedTrack(unexpected()))
+    }
 }

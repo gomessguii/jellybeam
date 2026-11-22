@@ -742,6 +742,8 @@ fun PlaybackScreen(
     }
     /** The button row's focused identity; null only while another overlay owns interaction. */
     var focusedButton by remember { mutableStateOf<ControlButton?>(null) }
+    /** docs/18 §1.2: the focused row of the error dialog; each new error starts on its first row. */
+    var errorFocus by remember { mutableIntStateOf(0) }
     /** docs/15 §4: the button that opened the current nested surface, captured before
      * [focusedButton] is cleared, consumed by `restoreInvokerFocus` on close. */
     var menuInvoker by remember { mutableStateOf<ControlButton?>(null) }
@@ -912,6 +914,11 @@ fun PlaybackScreen(
 
     BackHandler(onBack = {
         val current = viewModel.state.value
+        // docs/18 §1.2: Back on the error dialog is its Close row.
+        if (current.playbackError != null) {
+            viewModel.choosePlaybackErrorOption(PlaybackErrorAction.Close)
+            return@BackHandler
+        }
         when (
             resolveBackAction(
                 pickerOpen = current.trackPicker != null,
@@ -1132,6 +1139,21 @@ fun PlaybackScreen(
 
     val handleKeyEvent = remember(viewModel, sheetScrollState, sheetScrollStepPx, glide) {
         keyHandler@{ event: KeyEvent ->
+            // docs/18 §1.2: the error dialog owns every key but Back (its Close, via BackHandler).
+            viewModel.state.value.playbackError?.let { error ->
+                if (event.key == Key.Back) return@keyHandler false
+                if (event.type != KeyEventType.KeyDown) return@keyHandler true
+                when (event.key) {
+                    Key.DirectionUp -> errorFocus = (errorFocus - 1).coerceAtLeast(0)
+                    Key.DirectionDown -> errorFocus = (errorFocus + 1).coerceAtMost(error.options.lastIndex)
+                    in SELECT_KEYS -> if (event.nativeKeyEvent.repeatCount == 0) {
+                        error.options.getOrNull(errorFocus)?.let { viewModel.choosePlaybackErrorOption(it.action) }
+                    }
+                    else -> Unit
+                }
+                return@keyHandler true
+            }
+
             // docs/12 §16: the open delay control owns every key, first, so Select's release and the
             // hidden-OSD seek and reveal rules below never see them; unlisted keys (transport, Back) pass.
             if (viewModel.state.value.subtitleDelay != null) {
@@ -1882,6 +1904,78 @@ fun PlaybackScreen(
                 state.reconnecting?.let { ReconnectingPill(info = it) }
             }
         }
+
+        // docs/18 §1.2: drawn last, over the OSD and every card.
+        state.playbackError?.let { error ->
+            LaunchedEffect(error) { errorFocus = 0 }
+            PlaybackErrorOverlay(error = error, focusedIndex = errorFocus, modifier = Modifier.fillMaxSize())
+        }
+        }
+    }
+}
+
+private val ERROR_DIALOG_WIDTH = 560.dp
+private val ERROR_DIALOG_H_PADDING = 24.dp
+
+/**
+ * docs/18 §1.2's error dialog: what failed and why, then its rows (other audio tracks under a
+ * "Switch to" heading, Transcode, Close), in the shared menu surface over a dimmed, paused frame.
+ */
+@Composable
+private fun PlaybackErrorOverlay(error: PlaybackErrorState, focusedIndex: Int, modifier: Modifier = Modifier) {
+    val accent = LocalAccent.current
+    Box(modifier = modifier.background(Color.Black.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier
+                .width(ERROR_DIALOG_WIDTH)
+                .heightIn(max = 600.dp)
+                .osdMenuSurface()
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 20.dp),
+        ) {
+            Column(modifier = Modifier.padding(horizontal = ERROR_DIALOG_H_PADDING)) {
+                BasicText(
+                    text = error.title,
+                    style = TextStyle(fontFamily = JellybeamTheme.Archivo, fontWeight = FontWeight.SemiBold, color = JellybeamTheme.Panna, fontSize = 20.sp),
+                )
+                error.failedTrack?.let {
+                    BasicText(
+                        text = it,
+                        modifier = Modifier.padding(top = 6.dp),
+                        style = TextStyle(fontFamily = JellybeamTheme.MartianMono, color = accent.accentInk, fontSize = 13.sp),
+                    )
+                }
+                BasicText(
+                    text = error.message,
+                    modifier = Modifier.padding(top = 10.dp),
+                    style = TextStyle(fontFamily = JellybeamTheme.Archivo, color = JellybeamTheme.Panna, fontSize = 14.sp),
+                )
+                BasicText(
+                    text = error.code,
+                    modifier = Modifier.padding(top = 10.dp),
+                    style = TextStyle(fontFamily = JellybeamTheme.MartianMono, color = JellybeamTheme.Grigio, fontSize = 11.sp),
+                )
+                error.cause?.let {
+                    BasicText(
+                        text = it,
+                        modifier = Modifier.padding(top = 4.dp),
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(fontFamily = JellybeamTheme.MartianMono, color = JellybeamTheme.Grigio, fontSize = 11.sp),
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            error.options.forEachIndexed { index, option ->
+                if (index == 0 && option.action is PlaybackErrorAction.SwitchAudio) {
+                    TrackPickerSectionHeader(text = stringResource(R.string.player_error_switch_heading))
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                val firstNonTrack = option.action !is PlaybackErrorAction.SwitchAudio &&
+                    error.options.getOrNull(index - 1)?.action is PlaybackErrorAction.SwitchAudio
+                if (firstNonTrack) Spacer(modifier = Modifier.height(12.dp))
+                OsdMenuRow(label = option.label, focused = index == focusedIndex, subtitle = option.meta)
+            }
         }
     }
 }

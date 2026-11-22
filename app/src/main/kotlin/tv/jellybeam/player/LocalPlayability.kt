@@ -36,17 +36,28 @@ internal object LocalPlayability {
         unsupportedTypeReason(tracks, C.TRACK_TYPE_VIDEO, "video")?.let { FailedTrackFfi.VIDEO to it }
             ?: unsupportedTypeReason(tracks, C.TRACK_TYPE_AUDIO, "audio")?.let { FailedTrackFfi.AUDIO to it }
 
-    /** docs/18 §2: a renderer error names its failing format's type; anything else is unattributed. */
+    /**
+     * docs/18 §2: a renderer error names its failing format's type. An unexpected runtime error
+     * thrown inside Media3's audio pipeline (§1.2) is audio too; anything else is unattributed.
+     */
     fun failedTrack(error: PlaybackException): FailedTrackFfi {
-        val mime = (error as? ExoPlaybackException)
-            ?.takeIf { it.type == ExoPlaybackException.TYPE_RENDERER }
-            ?.rendererFormat?.sampleMimeType
+        val exo = error as? ExoPlaybackException
+        val mime = exo?.takeIf { it.type == ExoPlaybackException.TYPE_RENDERER }?.rendererFormat?.sampleMimeType
         return when {
             MimeTypes.isVideo(mime) -> FailedTrackFfi.VIDEO
             MimeTypes.isAudio(mime) -> FailedTrackFfi.AUDIO
+            exo?.type == ExoPlaybackException.TYPE_UNEXPECTED && raisedInAudioPipeline(exo.cause) -> FailedTrackFfi.AUDIO
             else -> FailedTrackFfi.UNKNOWN
         }
     }
+
+    /** Whether any frame of [cause]'s chain runs in Media3's audio package (kept named by proguard-rules.pro). */
+    internal fun raisedInAudioPipeline(cause: Throwable?): Boolean =
+        generateSequence(cause) { it.cause }.take(MAX_CAUSE_DEPTH)
+            .any { t -> t.stackTrace.any { it.className.startsWith(AUDIO_PIPELINE_PACKAGE) } }
+
+    private const val AUDIO_PIPELINE_PACKAGE = "androidx.media3.exoplayer.audio."
+    private const val MAX_CAUSE_DEPTH = 8
 
     /** `Tracks.Group` has no direct type accessor in Media3 1.9.0; mirrors
      * [TrackMapping.toTrackInfos]'s own `mediaTrackGroup.type` read.

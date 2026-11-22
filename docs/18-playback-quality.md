@@ -53,6 +53,41 @@ distrusts. The evidence Auto uses, in order:
 A transcode that then fails is a plain fatal error. The setting is global,
 not per server.
 
+### 1.2 The error dialog
+
+A fatal playback error after the first frame no longer closes the player
+on a toast the viewer can't read in time. The player stays open on the
+paused frame under a dialog that names what failed (the audio track's
+label and format, when it is one), the Media3 error code and the
+innermost exception's own message, then offers rows:
+
+- **An audio track failed** (a renderer error whose format is audio, or
+  an unexpected runtime error thrown inside Media3's audio pipeline): the
+  item's other audio tracks under "Switch to" — the failed track's
+  language first, then the file's default, then file order, never a track
+  that already failed this item — then **Transcode audio on the server**
+  when §1's fallback is allowed, then **Close**. A switch applies the
+  track as a picker choice would and retries from where playback failed.
+  Auto's fallback is a row here, never taken before the viewer picks it:
+  the error stays readable, and another track often plays without a
+  transcode.
+- **Any other error**: §1's automatic fallback still runs when it is
+  allowed; otherwise the dialog shows the fatal message with **Close**
+  only.
+
+Back is Close. Close ends playback exactly as the fatal path did. The
+dialog is not shown before the first frame (no player UI is up yet; the
+toast stays) or in a watch-together group (docs/28 keeps its own error
+handling).
+
+### 1.3 Multichannel FLAC decodes in FFmpeg
+
+FLAC with more than two channels always goes to the bundled FFmpeg
+decoder instead of the platform one. Both are software decoders; on a
+tested device the platform decoder's 7.1 output crashed Media3's audio
+sink a few seconds in, and FFmpeg plays the same track through. Stereo
+FLAC keeps the platform decoder. No setting: the choice costs nothing.
+
 ## 2. Rust core
 
 `Settings.playback_quality: PlaybackQuality`:

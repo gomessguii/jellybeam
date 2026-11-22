@@ -13,3 +13,7 @@
 # so keep the whole generated package verbatim. It's one file; the size
 # cost is negligible next to the .so it wraps.
 -keep class uniffi.jellybeam_core.** { *; }
+
+# docs/18 §1.2: LocalPlayability.failedTrack attributes an unexpected runtime error to audio by
+# its stack frames, so Media3's audio classes keep their names (members still shrink and rename).
+-keepnames class androidx.media3.exoplayer.audio.**

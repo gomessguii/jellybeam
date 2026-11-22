@@ -3681,11 +3681,14 @@ class PlaybackViewModelTest {
         withSession(viewModel) {
             player.fireIsPlayingChanged(true)
             player.fireError(PlaybackException("boom", null, PlaybackException.ERROR_CODE_DECODING_FAILED))
+            // docs/18 §1.2: active playback keeps the error on a dialog until it is closed.
+            assertTrue(gateway.stopPlaybackCalls.isEmpty())
+            viewModel.choosePlaybackErrorOption(PlaybackErrorAction.Close)
 
             assertEquals(listOf(42_000_000L), gateway.stopPlaybackCalls)
             assertEquals(0, gateway.abandonPlaybackCallCount)
             assertEquals(1, player.stopAndClearCallCount)
-            assertTrue(viewModel.events.replayCache.firstOrNull() is PlaybackEvent.FinishWithMessage)
+            assertEquals(PlaybackEvent.Finish, viewModel.events.replayCache.firstOrNull())
         }
     }
 
@@ -6571,6 +6574,8 @@ class PlaybackViewModelTest {
                     FinalStop.FATAL_ERROR -> {
                         player.fireRenderedFirstFrame()
                         player.fireError(PlaybackException("boom", null, PlaybackException.ERROR_CODE_DECODING_FAILED))
+                        // docs/18 §1.2: mid-play, the stop follows the error dialog's Close.
+                        viewModel.choosePlaybackErrorOption(PlaybackErrorAction.Close)
                     }
                 }
                 assertEquals("$entry: the final stop is on its way to the core", 1, gateway.stopPlaybackEntered)
@@ -7959,4 +7964,147 @@ class PlaybackViewModelTest {
             assertEquals("$mode $plan $streamRow", refused, groupRefusesSubtitlePick(mode, plan, streamRow))
         }
     }
+
+    // -- Playback error dialog (docs/18 §1.2) --------------------------------
+
+    /** A failing 8-channel FLAC (selected), an English E-AC3 and an Italian AC3, each its own group: ids 0, 1000, 2000. */
+    private fun audioFailureTracks(): Tracks {
+        fun group(id: String, mime: String, lang: String, selected: Boolean) = Tracks.Group(
+            TrackGroup(Format.Builder().setId(id).setSampleMimeType(mime).setChannelCount(if (mime == "audio/flac") 8 else 6).setLanguage(lang).build()),
+            /* adaptiveSupported= */ false,
+            intArrayOf(C.FORMAT_HANDLED),
+            booleanArrayOf(selected),
+        )
+        return Tracks(listOf(group("2", "audio/flac", "eng", true), group("4", "audio/ac3", "ita", false), group("3", "audio/eac3", "eng", false)))
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun audioRendererError(format: Format) = androidx.media3.exoplayer.ExoPlaybackException.createForRenderer(
+        IllegalStateException("AudioTrack init failed"),
+        "MediaCodecAudioRenderer",
+        /* rendererIndex= */ 1,
+        format,
+        C.FORMAT_HANDLED,
+        /* isRecoverable= */ false,
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
+    )
+
+    @Test
+    fun `an audio track failure mid-play opens the error dialog, and a switch retries from there on the chosen track`() =
+        runTest(timeout = TEST_TIMEOUT) {
+            val plan = samplePlan(transcodeFallbackAllowed = false)
+            val gateway = FakeCoreGateway(preparePlaybackResult = Result.success(plan), resolveTracksResult = leaveEverythingAloneDecision())
+            val player = FakePlaybackPlayer()
+            val viewModel = buildViewModel(gateway, player, plan.itemId)
+            withSession(viewModel) {
+                val tracks = audioFailureTracks()
+                player.fireTracksChanged(tracks)
+                player.fireRenderedFirstFrame()
+                player.fireError(audioRendererError(tracks.groups[0].getTrackFormat(0)))
+
+                val dialog = viewModel.state.value.playbackError
+                assertNotNull("the error stays on screen instead of closing on a toast", dialog)
+                // Same language first, then file order; never the failed track; Close always last.
+                assertEquals(
+                    listOf(PlaybackErrorAction.SwitchAudio(2000L), PlaybackErrorAction.SwitchAudio(1000L), PlaybackErrorAction.Close),
+                    dialog!!.options.map { it.action },
+                )
+                assertEquals("IllegalStateException: AudioTrack init failed", dialog.cause)
+                assertEquals("ERROR_CODE_AUDIO_TRACK_INIT_FAILED", dialog.code)
+                assertTrue("nothing ends the session while the dialog is up", viewModel.events.replayCache.isEmpty())
+                assertEquals(0, gateway.abandonPlaybackCallCount)
+                assertTrue(gateway.stopPlaybackCalls.isEmpty())
+
+                viewModel.choosePlaybackErrorOption(PlaybackErrorAction.SwitchAudio(2000L))
+                assertNull(viewModel.state.value.playbackError)
+                assertEquals(2000L, player.applyTrackDecisionCalls.last().first.audioTrackId)
+                assertEquals(listOf(dialog.positionTicks to true), player.retryAfterErrorCalls)
+
+                // The replacement fails too: neither failed track is offered again.
+                player.fireError(audioRendererError(tracks.groups[2].getTrackFormat(0)))
+                assertEquals(
+                    listOf(PlaybackErrorAction.SwitchAudio(1000L), PlaybackErrorAction.Close),
+                    viewModel.state.value.playbackError!!.options.map { it.action },
+                )
+            }
+        }
+
+    @Test
+    fun `Close on the error dialog ends playback the way the fatal path does`() = runTest(timeout = TEST_TIMEOUT) {
+        val plan = samplePlan(transcodeFallbackAllowed = false)
+        val gateway = FakeCoreGateway(preparePlaybackResult = Result.success(plan), resolveTracksResult = leaveEverythingAloneDecision())
+        val player = FakePlaybackPlayer()
+        val viewModel = buildViewModel(gateway, player, plan.itemId)
+        withSession(viewModel) {
+            val tracks = audioFailureTracks()
+            player.fireTracksChanged(tracks)
+            player.fireRenderedFirstFrame()
+            player.fireError(audioRendererError(tracks.groups[0].getTrackFormat(0)))
+
+            viewModel.choosePlaybackErrorOption(PlaybackErrorAction.Close)
+            assertNull(viewModel.state.value.playbackError)
+            assertEquals(PlaybackEvent.Finish, viewModel.events.replayCache.last())
+            assertEquals("an active session reports its stop", 1, gateway.stopPlaybackCalls.size)
+            assertTrue(player.retryAfterErrorCalls.isEmpty())
+        }
+    }
+
+    @Test
+    fun `an audio failure offers the transcode fallback as a row instead of taking it`() = runTest(timeout = TEST_TIMEOUT) {
+        val plan = samplePlan(transcodeFallbackAllowed = true)
+        val transcodePlan = samplePlan(playMethod = PlayMethodFfi.TRANSCODE, transcodeReason = "audio")
+        val gateway = FakeCoreGateway(
+            preparePlaybackResult = Result.success(plan),
+            prepareTranscodeFallbackResult = Result.success(transcodePlan),
+            resolveTracksResult = leaveEverythingAloneDecision(),
+        )
+        val player = FakePlaybackPlayer()
+        val viewModel = buildViewModel(gateway, player, plan.itemId)
+        withSession(viewModel) {
+            val tracks = audioFailureTracks()
+            player.fireTracksChanged(tracks)
+            player.fireRenderedFirstFrame()
+            player.fireError(audioRendererError(tracks.groups[0].getTrackFormat(0)))
+
+            assertTrue("no fallback before the viewer picks it", gateway.prepareTranscodeFallbackCalls.isEmpty())
+            assertEquals(
+                listOf(PlaybackErrorAction.SwitchAudio(2000L), PlaybackErrorAction.SwitchAudio(1000L), PlaybackErrorAction.Transcode, PlaybackErrorAction.Close),
+                viewModel.state.value.playbackError!!.options.map { it.action },
+            )
+
+            viewModel.choosePlaybackErrorOption(PlaybackErrorAction.Transcode)
+            assertEquals(listOf(FailedTrackFfi.AUDIO), gateway.prepareTranscodeFallbackCalls.map { it.failed })
+            assertEquals(transcodePlan, player.loadedPlan)
+        }
+    }
+
+    @Test
+    fun `a non-audio fatal error mid-play shows the dialog with Close only, and still falls back on its own when allowed`() =
+        runTest(timeout = TEST_TIMEOUT) {
+            val blocked = samplePlan(transcodeFallbackAllowed = false, serverVerdict = "codec not supported")
+            val gateway = FakeCoreGateway(preparePlaybackResult = Result.success(blocked))
+            val player = FakePlaybackPlayer()
+            val viewModel = buildViewModel(gateway, player, blocked.itemId)
+            val error = PlaybackException("boom", null, PlaybackException.ERROR_CODE_DECODING_FAILED)
+            withSession(viewModel) {
+                player.fireRenderedFirstFrame()
+                player.fireError(error)
+                val dialog = viewModel.state.value.playbackError!!
+                assertEquals(listOf(PlaybackErrorAction.Close), dialog.options.map { it.action })
+                assertEquals(fatalPlaybackMessage(ResourceUiStrings.default, error.errorCodeName, blocked), dialog.message)
+                assertNull(dialog.failedTrack)
+            }
+
+            val allowed = samplePlan(transcodeFallbackAllowed = true)
+            val transcodePlan = samplePlan(playMethod = PlayMethodFfi.TRANSCODE, transcodeReason = "boom")
+            val gateway2 = FakeCoreGateway(preparePlaybackResult = Result.success(allowed), prepareTranscodeFallbackResult = Result.success(transcodePlan))
+            val player2 = FakePlaybackPlayer()
+            val viewModel2 = buildViewModel(gateway2, player2, allowed.itemId)
+            withSession(viewModel2) {
+                player2.fireRenderedFirstFrame()
+                player2.fireError(error)
+                assertNull(viewModel2.state.value.playbackError)
+                assertEquals(1, gateway2.prepareTranscodeFallbackCalls.size)
+            }
+        }
 }
